@@ -177,13 +177,4 @@ npm start
 | `GET` | `/api/master/agent-profile`| Accredited IATA issuing agent profile |
 | `GET` | `/api/dashboard/stats` | Live tonnage, operational KPIs & pipeline |
 
----
-
-## 🔗 Integration with Frontend
-
-The frontend (`ita-web-frontend`) includes a typed API client in `src/lib/api.ts` configured via `.env.local`:
-```env
-NEXT_PUBLIC_API_URL=http://localhost:5000/api
-```
-When `iata-server` is running, the frontend navbar automatically displays a **Fastify Server Connected** live operational badge and synchronizes state directly with MongoDB.
 
