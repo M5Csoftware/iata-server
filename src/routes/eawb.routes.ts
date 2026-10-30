@@ -1,8 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { EawbMessage } from '../models/EawbMessage.js';
-import { Mawb, AwbStatus } from '../models/Mawb.js';
-import { FlightManifest } from '../models/FlightManifest.js';
-import { AuditLog } from '../models/AuditLog.js';
+import { mockStore, EawbMessageItem } from '../store/mockStore.js';
 import { generateFwbMessage, generateFhlMessage, generateFfmMessage, generateFsuMessage } from '../utils/cargoImp.js';
 
 export default async function eawbRoutes(fastify: FastifyInstance) {
@@ -10,7 +7,7 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
   fastify.get('/api/eawb', {
     schema: {
       tags: ['e-AWB & Cargo-IMP EDI'],
-      summary: 'List all Cargo-IMP/XML teletype messages (FWB, FHL, FFM, FSU)',
+      summary: 'List all Cargo-IMP/XML teletype messages from mock store',
       querystring: {
         type: 'object',
         properties: {
@@ -21,17 +18,16 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { messageType?: string; awbNumber?: string };
-      const filter: any = {};
+      let list = [...mockStore.eawbMessages];
 
-      if (query.messageType) filter.messageType = query.messageType.toUpperCase();
-      if (query.awbNumber) filter.awbNumber = query.awbNumber;
+      if (query.messageType) list = list.filter((m) => m.messageType === query.messageType?.toUpperCase());
+      if (query.awbNumber) list = list.filter((m) => m.awbNumber === query.awbNumber);
 
-      const messages = await EawbMessage.find(filter).sort({ createdAt: -1 });
-      return reply.send({ success: true, count: messages.length, messages });
+      return reply.send({ success: true, count: list.length, messages: list });
     },
   });
 
-  // Dispatch FWB (Freight Waybill)
+  // Dispatch FWB
   fastify.post('/api/eawb/dispatch-fwb', {
     schema: {
       tags: ['e-AWB & Cargo-IMP EDI'],
@@ -46,16 +42,22 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { mawbNumber } = request.body as { mawbNumber: string };
-      const mawb = await Mawb.findOne({ mawbNumber });
+      const mawb = mockStore.mawbs.find((m) => m.mawbNumber === mawbNumber);
 
       if (!mawb) {
         return reply.status(404).send({ success: false, error: 'MAWB not found.' });
       }
 
       const rawCargoImp = generateFwbMessage(mawb);
-      const airlineName = mawb.airlinePrefix === '098' ? 'Air India Cargo' : mawb.airlinePrefix === '176' ? 'Emirates SkyCargo' : 'Lufthansa Cargo';
+      const airlineName =
+        mawb.airlinePrefix === '098'
+          ? 'Air India Cargo'
+          : mawb.airlinePrefix === '176'
+          ? 'Emirates SkyCargo'
+          : 'Lufthansa Cargo';
 
-      const message = await EawbMessage.create({
+      const message: EawbMessageItem = {
+        id: `msg-${Date.now()}`,
         messageType: 'FWB',
         awbNumber: mawb.mawbNumber,
         airline: airlineName,
@@ -64,28 +66,31 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
         status: 'ACKNOWLEDGED',
         timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
         rawCargoImp,
-      });
+        createdAt: new Date().toISOString(),
+      };
 
+      mockStore.eawbMessages.unshift(message);
       mawb.fwbSent = true;
-      await mawb.save();
 
-      await AuditLog.create({
+      mockStore.auditLogs.push({
+        id: `aud-${Date.now()}`,
         entityType: 'EAWB',
         entityId: mawb.mawbNumber,
         action: 'DISPATCH',
         performedBy: (request.headers['x-user-name'] as string) || 'system',
-        details: { messageType: 'FWB', rawCargoImp },
+        details: { messageType: 'FWB' },
+        timestamp: new Date().toISOString(),
       });
 
       return reply.status(201).send({
         success: true,
         message: `Cargo-IMP FWB message transmitted to airline host for ${mawbNumber}.`,
-        eawbMessage: message.toJSON(),
+        eawbMessage: message,
       });
     },
   });
 
-  // Dispatch FHL (Freight House List)
+  // Dispatch FHL
   fastify.post('/api/eawb/dispatch-fhl', {
     schema: {
       tags: ['e-AWB & Cargo-IMP EDI'],
@@ -100,7 +105,7 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { mawbNumber } = request.body as { mawbNumber: string };
-      const mawb = await Mawb.findOne({ mawbNumber });
+      const mawb = mockStore.mawbs.find((m) => m.mawbNumber === mawbNumber);
 
       if (!mawb) {
         return reply.status(404).send({ success: false, error: 'MAWB not found.' });
@@ -115,9 +120,11 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
       }
 
       const rawCargoImp = generateFhlMessage(mawb, mawb.hawbs);
-      const airlineName = mawb.airlinePrefix === '098' ? 'Air India Cargo' : mawb.airlinePrefix === '176' ? 'Emirates SkyCargo' : 'Lufthansa Cargo';
+      const airlineName =
+        mawb.airlinePrefix === '098' ? 'Air India Cargo' : 'Emirates SkyCargo';
 
-      const message = await EawbMessage.create({
+      const message: EawbMessageItem = {
+        id: `msg-${Date.now()}`,
         messageType: 'FHL',
         awbNumber: mawb.mawbNumber,
         airline: airlineName,
@@ -126,25 +133,30 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
         status: 'ACKNOWLEDGED',
         timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
         rawCargoImp,
-      });
+        createdAt: new Date().toISOString(),
+      };
 
-      await AuditLog.create({
+      mockStore.eawbMessages.unshift(message);
+
+      mockStore.auditLogs.push({
+        id: `aud-${Date.now()}`,
         entityType: 'EAWB',
         entityId: mawb.mawbNumber,
         action: 'DISPATCH',
         performedBy: (request.headers['x-user-name'] as string) || 'system',
         details: { messageType: 'FHL', hawbCount: mawb.hawbs.length },
+        timestamp: new Date().toISOString(),
       });
 
       return reply.status(201).send({
         success: true,
         message: `Cargo-IMP FHL house manifest transmitted for ${mawbNumber}.`,
-        eawbMessage: message.toJSON(),
+        eawbMessage: message,
       });
     },
   });
 
-  // Dispatch FFM (Flight Forward Manifest)
+  // Dispatch FFM
   fastify.post('/api/eawb/dispatch-ffm', {
     schema: {
       tags: ['e-AWB & Cargo-IMP EDI'],
@@ -159,7 +171,7 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { manifestNumber } = request.body as { manifestNumber: string };
-      const manifest = await FlightManifest.findOne({ manifestNumber });
+      const manifest = mockStore.manifests.find((m) => m.manifestNumber === manifestNumber);
 
       if (!manifest) {
         return reply.status(404).send({ success: false, error: 'Manifest not found.' });
@@ -167,7 +179,8 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
 
       const rawCargoImp = generateFfmMessage(manifest);
 
-      const message = await EawbMessage.create({
+      const message: EawbMessageItem = {
+        id: `msg-${Date.now()}`,
         messageType: 'FFM',
         awbNumber: manifest.manifestNumber,
         airline: manifest.airline,
@@ -176,17 +189,20 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
         status: 'ACKNOWLEDGED',
         timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
         rawCargoImp,
-      });
+        createdAt: new Date().toISOString(),
+      };
+
+      mockStore.eawbMessages.unshift(message);
 
       return reply.status(201).send({
         success: true,
         message: `Cargo-IMP FFM message transmitted for flight ${manifest.flightNumber}.`,
-        eawbMessage: message.toJSON(),
+        eawbMessage: message,
       });
     },
   });
 
-  // Dispatch FSU (Flight Status Update)
+  // Dispatch FSU
   fastify.post('/api/eawb/dispatch-fsu', {
     schema: {
       tags: ['e-AWB & Cargo-IMP EDI'],
@@ -208,13 +224,12 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
         station: string;
       };
 
-      const mawb = await Mawb.findOne({ mawbNumber: awbNumber });
+      const mawb = mockStore.mawbs.find((m) => m.mawbNumber === awbNumber);
       if (!mawb) {
         return reply.status(404).send({ success: false, error: 'MAWB not found.' });
       }
 
-      // Map statusType to AwbStatus
-      const statusMap: Record<string, AwbStatus> = {
+      const statusMap: Record<string, any> = {
         RCS: 'ALLOTTED',
         MAN: 'MANIFESTED',
         DEP: 'DEPARTED',
@@ -224,7 +239,6 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
 
       if (statusMap[statusType]) {
         mawb.status = statusMap[statusType];
-        await mawb.save();
       }
 
       const rawCargoImp = generateFsuMessage({
@@ -236,7 +250,8 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
         flightNumber: mawb.flightNumber,
       });
 
-      const message = await EawbMessage.create({
+      const message: EawbMessageItem = {
+        id: `msg-${Date.now()}`,
         messageType: 'FSU',
         awbNumber: mawb.mawbNumber,
         airline: mawb.airlinePrefix === '098' ? 'Air India Cargo' : 'Emirates SkyCargo',
@@ -245,15 +260,17 @@ export default async function eawbRoutes(fastify: FastifyInstance) {
         status: 'ACKNOWLEDGED',
         timestamp: new Date().toISOString().replace('T', ' ').substring(0, 19) + ' UTC',
         rawCargoImp,
-      });
+        createdAt: new Date().toISOString(),
+      };
+
+      mockStore.eawbMessages.unshift(message);
 
       return reply.status(201).send({
         success: true,
         message: `FSU (${statusType}) status update recorded. MAWB transitioned to ${mawb.status}.`,
-        eawbMessage: message.toJSON(),
-        mawb: mawb.toJSON(),
+        eawbMessage: message,
+        mawb,
       });
     },
   });
 }
-

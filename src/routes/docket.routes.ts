@@ -1,10 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { Docket } from '../models/Docket.js';
-import { AwbStock } from '../models/AwbStock.js';
-import { Mawb } from '../models/Mawb.js';
-import { CassInvoice } from '../models/CassInvoice.js';
-import { AgentProfile } from '../models/MasterData.js';
-import { AuditLog } from '../models/AuditLog.js';
+import { mockStore, DocketItem, MawbItem, CassInvoiceItem } from '../store/mockStore.js';
 import { calculateVolumetricWeight, calculateChargeableWeight, calculateFreightCharges } from '../utils/volumetric.js';
 
 export default async function docketRoutes(fastify: FastifyInstance) {
@@ -12,7 +7,7 @@ export default async function docketRoutes(fastify: FastifyInstance) {
   fastify.get('/api/dockets', {
     schema: {
       tags: ['Cargo Dockets & Consignments'],
-      summary: 'List all cargo consignment dockets',
+      summary: 'List all cargo consignment dockets from mock store',
       querystring: {
         type: 'object',
         properties: {
@@ -23,20 +18,23 @@ export default async function docketRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { status?: string; search?: string };
-      const filter: any = {};
+      let list = [...mockStore.dockets];
 
-      if (query.status) filter.status = query.status;
+      if (query.status) {
+        list = list.filter((d) => d.status === query.status);
+      }
       if (query.search) {
-        filter.$or = [
-          { docketNumber: { $regex: query.search, $options: 'i' } },
-          { consignorName: { $regex: query.search, $options: 'i' } },
-          { consigneeName: { $regex: query.search, $options: 'i' } },
-          { assignedAwb: { $regex: query.search, $options: 'i' } },
-        ];
+        const q = query.search.toLowerCase();
+        list = list.filter(
+          (d) =>
+            d.docketNumber.toLowerCase().includes(q) ||
+            d.consignorName.toLowerCase().includes(q) ||
+            d.consigneeName.toLowerCase().includes(q) ||
+            (d.assignedAwb && d.assignedAwb.toLowerCase().includes(q))
+        );
       }
 
-      const dockets = await Docket.find(filter).sort({ createdAt: -1 });
-      return reply.send({ success: true, count: dockets.length, dockets });
+      return reply.send({ success: true, count: list.length, dockets: list });
     },
   });
 
@@ -53,11 +51,11 @@ export default async function docketRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
-      const docket = await Docket.findById(id);
+      const docket = mockStore.dockets.find((d) => d.id === id || d.docketNumber === id);
       if (!docket) {
         return reply.status(404).send({ success: false, error: 'Docket not found.' });
       }
-      return reply.send({ success: true, docket: docket.toJSON() });
+      return reply.send({ success: true, docket });
     },
   });
 
@@ -80,10 +78,13 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         handlingFee: body.docketFee || 250,
       });
 
-      const docketNumber = body.docketNumber || `DKT-${body.origin || 'DEL'}-${new Date().getFullYear().toString().slice(2)}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const docketNumber =
+        body.docketNumber ||
+        `DKT-${body.origin || 'DEL'}-${new Date().getFullYear().toString().slice(2)}${String(new Date().getMonth() + 1).padStart(2, '0')}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      const docket = await Docket.create({
+      const newDocket: DocketItem = {
         ...body,
+        id: `dkt-${Date.now()}`,
         docketNumber,
         bookingDate: body.bookingDate || new Date().toISOString().split('T')[0],
         volumetricWeightKg,
@@ -98,17 +99,22 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         gstAmount: body.gstAmount || pricing.gstAmount,
         totalAmount: body.totalAmount || pricing.totalAmount,
         status: 'BOOKED',
-      });
+        createdAt: new Date().toISOString(),
+      };
 
-      await AuditLog.create({
+      mockStore.dockets.unshift(newDocket);
+
+      mockStore.auditLogs.push({
+        id: `aud-${Date.now()}`,
         entityType: 'DOCKET',
-        entityId: docket.docketNumber,
+        entityId: newDocket.docketNumber,
         action: 'CREATE',
         performedBy: (request.headers['x-user-name'] as string) || 'system',
-        details: { chargeableWeightKg, totalAmount: docket.totalAmount },
+        details: { chargeableWeightKg, totalAmount: newDocket.totalAmount },
+        timestamp: new Date().toISOString(),
       });
 
-      return reply.status(201).send({ success: true, docket: docket.toJSON() });
+      return reply.status(201).send({ success: true, docket: newDocket });
     },
   });
 
@@ -125,7 +131,7 @@ export default async function docketRoutes(fastify: FastifyInstance) {
       body: {
         type: 'object',
         properties: {
-          airlinePrefix: { type: 'string', description: 'Optional airline prefix preference' },
+          airlinePrefix: { type: 'string' },
         },
       },
     },
@@ -133,7 +139,7 @@ export default async function docketRoutes(fastify: FastifyInstance) {
       const { id } = request.params as { id: string };
       const { airlinePrefix } = (request.body as { airlinePrefix?: string }) || {};
 
-      const docket = await Docket.findById(id);
+      const docket = mockStore.dockets.find((d) => d.id === id || d.docketNumber === id);
       if (!docket) {
         return reply.status(404).send({ success: false, error: 'Docket not found.' });
       }
@@ -146,10 +152,12 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const stockFilter: any = { status: 'AVAILABLE' };
-      if (airlinePrefix) stockFilter.airlinePrefix = airlinePrefix;
+      const availableStock = mockStore.stock.find((s) => {
+        if (s.status !== 'AVAILABLE') return false;
+        if (airlinePrefix && s.airlinePrefix !== airlinePrefix) return false;
+        return true;
+      });
 
-      const availableStock = await AwbStock.findOne(stockFilter).sort({ createdAt: 1 });
       if (!availableStock) {
         return reply.status(400).send({
           success: false,
@@ -161,28 +169,24 @@ export default async function docketRoutes(fastify: FastifyInstance) {
       // Mark stock ISSUED
       availableStock.status = 'ISSUED';
       availableStock.issuedAt = new Date().toISOString().split('T')[0];
-      await availableStock.save();
 
       // Update docket
       docket.status = 'AWB_ASSIGNED';
       docket.assignedAwb = availableStock.fullAwbNumber;
-      await docket.save();
-
-      // Fetch agent profile
-      const agentProfile = await AgentProfile.findOne();
 
       // Create MAWB
-      const mawb = await Mawb.create({
+      const newMawb: MawbItem = {
+        id: `mawb-${Date.now()}`,
         mawbNumber: availableStock.fullAwbNumber,
         airlinePrefix: availableStock.airlinePrefix,
         serialNumber: availableStock.airlineNumber,
-        docketId: docket._id.toString(),
+        docketId: docket.id,
         shipperName: docket.consignorName,
         shipperAddress: docket.consignorAddress,
         consigneeName: docket.consigneeName,
         consigneeAddress: docket.consigneeAddress,
-        issuingAgentName: agentProfile?.name || 'Apex Global Logistics Pvt. Ltd.',
-        issuingAgentIataCode: agentProfile?.iataNumericCode || '14-3-9821/0014',
+        issuingAgentName: mockStore.agentProfile.name,
+        issuingAgentIataCode: mockStore.agentProfile.iataNumericCode,
         origin: docket.origin,
         destination: docket.destination,
         pieces: docket.pieces,
@@ -200,13 +204,17 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         flightDate: new Date(Date.now() + 86400000 * 2).toISOString().split('T')[0],
         status: 'ISSUED',
         issuedAt: new Date().toISOString().split('T')[0],
+        fwbSent: false,
         hawbs: [],
-      });
+        createdAt: new Date().toISOString(),
+      };
+      mockStore.mawbs.unshift(newMawb);
 
       // Create CASS Invoice
-      const invoice = await CassInvoice.create({
+      const newInvoice: CassInvoiceItem = {
+        id: `inv-${Date.now()}`,
         invoiceNumber: `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-        mawbNumber: mawb.mawbNumber,
+        mawbNumber: newMawb.mawbNumber,
         customerName: docket.consignorName,
         date: new Date().toISOString().split('T')[0],
         freightCharges: docket.freightAmount,
@@ -218,24 +226,17 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         totalAmount: docket.totalAmount,
         cassReconciliationStatus: 'PENDING_MATCH',
         paymentStatus: docket.paymentMode === 'PREPAID' ? 'PAID' : 'UNPAID',
-      });
-
-      await AuditLog.create({
-        entityType: 'MAWB',
-        entityId: mawb.mawbNumber,
-        action: 'ASSIGN',
-        performedBy: (request.headers['x-user-name'] as string) || 'system',
-        details: { docketNumber: docket.docketNumber, invoiceNumber: invoice.invoiceNumber },
-      });
+        createdAt: new Date().toISOString(),
+      };
+      mockStore.invoices.unshift(newInvoice);
 
       return reply.send({
         success: true,
-        message: `AWB ${mawb.mawbNumber} allocated to Docket ${docket.docketNumber}.`,
-        docket: docket.toJSON(),
-        mawb: mawb.toJSON(),
-        invoice: invoice.toJSON(),
+        message: `AWB ${newMawb.mawbNumber} allocated to Docket ${docket.docketNumber}.`,
+        docket,
+        mawb: newMawb,
+        invoice: newInvoice,
       });
     },
   });
 }
-

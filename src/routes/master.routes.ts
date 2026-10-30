@@ -1,16 +1,15 @@
 import { FastifyInstance } from 'fastify';
-import { Airline, Airport, ShipperConsignee, AgentProfile } from '../models/MasterData.js';
+import { mockStore, AirlineItem, AirportItem, PartnerItem, AgentProfileItem } from '../store/mockStore.js';
 
 export default async function masterRoutes(fastify: FastifyInstance) {
   // --- Airlines ---
   fastify.get('/api/master/airlines', {
     schema: {
       tags: ['IATA Master Data'],
-      summary: 'Get all accredited IATA airlines with 3-digit prefix',
+      summary: 'Get all accredited IATA airlines with 3-digit prefix from mock store',
     },
     handler: async (_request, reply) => {
-      const airlines = await Airline.find().sort({ prefix: 1 });
-      return reply.send({ success: true, count: airlines.length, airlines });
+      return reply.send({ success: true, count: mockStore.airlines.length, airlines: mockStore.airlines });
     },
   });
 
@@ -31,7 +30,7 @@ export default async function masterRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const body = request.body as any;
-      const existing = await Airline.findOne({ prefix: body.prefix });
+      const existing = mockStore.airlines.find((a) => a.prefix === body.prefix);
       if (existing) {
         return reply.status(409).send({
           success: false,
@@ -40,8 +39,12 @@ export default async function masterRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const airline = await Airline.create(body);
-      return reply.status(201).send({ success: true, airline: airline.toJSON() });
+      const newAirline: AirlineItem = {
+        id: `air-${Date.now()}`,
+        ...body,
+      };
+      mockStore.airlines.push(newAirline);
+      return reply.status(201).send({ success: true, airline: newAirline });
     },
   });
 
@@ -49,11 +52,10 @@ export default async function masterRoutes(fastify: FastifyInstance) {
   fastify.get('/api/master/airports', {
     schema: {
       tags: ['IATA Master Data'],
-      summary: 'Get all accredited IATA airports / cargo stations',
+      summary: 'Get all accredited IATA airports from mock store',
     },
     handler: async (_request, reply) => {
-      const airports = await Airport.find().sort({ iataCode: 1 });
-      return reply.send({ success: true, count: airports.length, airports });
+      return reply.send({ success: true, count: mockStore.airports.length, airports: mockStore.airports });
     },
   });
 
@@ -74,7 +76,8 @@ export default async function masterRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const body = request.body as any;
-      const existing = await Airport.findOne({ iataCode: body.iataCode.toUpperCase() });
+      const code = body.iataCode.toUpperCase();
+      const existing = mockStore.airports.find((a) => a.iataCode === code);
       if (existing) {
         return reply.status(409).send({
           success: false,
@@ -83,19 +86,21 @@ export default async function masterRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const airport = await Airport.create({
+      const newAirport: AirportItem = {
+        id: `apt-${Date.now()}`,
         ...body,
-        iataCode: body.iataCode.toUpperCase(),
-      });
-      return reply.status(201).send({ success: true, airport: airport.toJSON() });
+        iataCode: code,
+      };
+      mockStore.airports.push(newAirport);
+      return reply.status(201).send({ success: true, airport: newAirport });
     },
   });
 
-  // --- Partners (Shipper / Consignee) ---
+  // --- Partners ---
   fastify.get('/api/master/partners', {
     schema: {
       tags: ['IATA Master Data'],
-      summary: 'List accredited shippers, consignees and trading partners',
+      summary: 'List accredited shippers, consignees and trading partners from mock store',
       querystring: {
         type: 'object',
         properties: {
@@ -105,11 +110,11 @@ export default async function masterRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { type?: string };
-      const filter: any = {};
-      if (query.type) filter.type = { $in: [query.type, 'BOTH'] };
-
-      const partners = await ShipperConsignee.find(filter).sort({ name: 1 });
-      return reply.send({ success: true, count: partners.length, partners });
+      let list = [...mockStore.partners];
+      if (query.type) {
+        list = list.filter((p) => p.type === query.type || p.type === 'BOTH');
+      }
+      return reply.send({ success: true, count: list.length, partners: list });
     },
   });
 
@@ -136,8 +141,12 @@ export default async function masterRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const body = request.body as any;
-      const partner = await ShipperConsignee.create(body);
-      return reply.status(201).send({ success: true, partner: partner.toJSON() });
+      const newPartner: PartnerItem = {
+        id: `prt-${Date.now()}`,
+        ...body,
+      };
+      mockStore.partners.push(newPartner);
+      return reply.status(201).send({ success: true, partner: newPartner });
     },
   });
 
@@ -148,22 +157,7 @@ export default async function masterRoutes(fastify: FastifyInstance) {
       summary: 'Get accredited IATA Cargo Issuing Agent profile',
     },
     handler: async (_request, reply) => {
-      let profile = await AgentProfile.findOne();
-      if (!profile) {
-        profile = await AgentProfile.create({
-          name: 'Apex Global Logistics Pvt. Ltd.',
-          iataNumericCode: '14-3-9821/0014',
-          cassAddress: 'CAS-IND-DEL-0941',
-          headOfficeAddress: 'Cargo Complex Terminal 3, Indira Gandhi International Airport',
-          city: 'New Delhi - 110037',
-          country: 'India',
-          phone: '+91-11-2565-9800',
-          email: 'airfreight@apexlogistics.iata.org',
-          gstNumber: '07AAACA9921D1Z8',
-          panNumber: 'AAACA9921D',
-        });
-      }
-      return reply.send({ success: true, profile: profile.toJSON() });
+      return reply.send({ success: true, profile: mockStore.agentProfile });
     },
   });
 
@@ -173,16 +167,9 @@ export default async function masterRoutes(fastify: FastifyInstance) {
       summary: 'Update accredited IATA Cargo Issuing Agent profile',
     },
     handler: async (request, reply) => {
-      const body = request.body as any;
-      let profile = await AgentProfile.findOne();
-      if (!profile) {
-        profile = await AgentProfile.create(body);
-      } else {
-        Object.assign(profile, body);
-        await profile.save();
-      }
-      return reply.send({ success: true, profile: profile.toJSON() });
+      const body = request.body as Partial<AgentProfileItem>;
+      mockStore.agentProfile = { ...mockStore.agentProfile, ...body };
+      return reply.send({ success: true, profile: mockStore.agentProfile });
     },
   });
 }
-

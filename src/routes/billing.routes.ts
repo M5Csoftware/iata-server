@@ -1,13 +1,12 @@
 import { FastifyInstance } from 'fastify';
-import { CassInvoice, PaymentStatus, CassStatus } from '../models/CassInvoice.js';
-import { AuditLog } from '../models/AuditLog.js';
+import { mockStore } from '../store/mockStore.js';
 
 export default async function billingRoutes(fastify: FastifyInstance) {
   // Get all CASS invoices
   fastify.get('/api/invoices', {
     schema: {
       tags: ['Billing & CASS Settlement'],
-      summary: 'List all freight invoices and CASS settlement records',
+      summary: 'List all freight invoices and CASS settlement records from mock store',
       querystring: {
         type: 'object',
         properties: {
@@ -19,20 +18,25 @@ export default async function billingRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { paymentStatus?: string; cassStatus?: string; search?: string };
-      const filter: any = {};
+      let list = [...mockStore.invoices];
 
-      if (query.paymentStatus) filter.paymentStatus = query.paymentStatus.toUpperCase();
-      if (query.cassStatus) filter.cassReconciliationStatus = query.cassStatus.toUpperCase();
+      if (query.paymentStatus) {
+        list = list.filter((i) => i.paymentStatus === query.paymentStatus?.toUpperCase());
+      }
+      if (query.cassStatus) {
+        list = list.filter((i) => i.cassReconciliationStatus === query.cassStatus?.toUpperCase());
+      }
       if (query.search) {
-        filter.$or = [
-          { invoiceNumber: { $regex: query.search, $options: 'i' } },
-          { mawbNumber: { $regex: query.search, $options: 'i' } },
-          { customerName: { $regex: query.search, $options: 'i' } },
-        ];
+        const q = query.search.toLowerCase();
+        list = list.filter(
+          (i) =>
+            i.invoiceNumber.toLowerCase().includes(q) ||
+            i.mawbNumber.toLowerCase().includes(q) ||
+            i.customerName.toLowerCase().includes(q)
+        );
       }
 
-      const invoices = await CassInvoice.find(filter).sort({ createdAt: -1 });
-      return reply.send({ success: true, count: invoices.length, invoices });
+      return reply.send({ success: true, count: list.length, invoices: list });
     },
   });
 
@@ -56,27 +60,26 @@ export default async function billingRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
-      const { paymentStatus } = request.body as { paymentStatus: PaymentStatus };
+      const { paymentStatus } = request.body as { paymentStatus: 'PAID' | 'UNPAID' | 'PARTIAL' };
 
-      const invoice = await CassInvoice.findByIdAndUpdate(
-        id,
-        { $set: { paymentStatus } },
-        { new: true }
-      );
-
+      const invoice = mockStore.invoices.find((i) => i.id === id || i.invoiceNumber === id);
       if (!invoice) {
         return reply.status(404).send({ success: false, error: 'Invoice not found.' });
       }
 
-      await AuditLog.create({
+      invoice.paymentStatus = paymentStatus;
+
+      mockStore.auditLogs.push({
+        id: `aud-${Date.now()}`,
         entityType: 'INVOICE',
         entityId: invoice.invoiceNumber,
         action: 'UPDATE',
         performedBy: (request.headers['x-user-name'] as string) || 'system',
         details: { paymentStatus },
+        timestamp: new Date().toISOString(),
       });
 
-      return reply.send({ success: true, invoice: invoice.toJSON() });
+      return reply.send({ success: true, invoice });
     },
   });
 
@@ -100,28 +103,26 @@ export default async function billingRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
-      const { cassStatus } = request.body as { cassStatus: CassStatus };
+      const { cassStatus } = request.body as { cassStatus: 'RECONCILED' | 'PENDING_MATCH' | 'DISCREPANCY' };
 
-      const invoice = await CassInvoice.findByIdAndUpdate(
-        id,
-        { $set: { cassReconciliationStatus: cassStatus } },
-        { new: true }
-      );
-
+      const invoice = mockStore.invoices.find((i) => i.id === id || i.invoiceNumber === id);
       if (!invoice) {
         return reply.status(404).send({ success: false, error: 'Invoice not found.' });
       }
 
-      await AuditLog.create({
+      invoice.cassReconciliationStatus = cassStatus;
+
+      mockStore.auditLogs.push({
+        id: `aud-${Date.now()}`,
         entityType: 'INVOICE',
         entityId: invoice.invoiceNumber,
         action: 'RECONCILE',
         performedBy: (request.headers['x-user-name'] as string) || 'system',
         details: { cassReconciliationStatus: cassStatus },
+        timestamp: new Date().toISOString(),
       });
 
-      return reply.send({ success: true, invoice: invoice.toJSON() });
+      return reply.send({ success: true, invoice });
     },
   });
 }
-
