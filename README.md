@@ -107,6 +107,7 @@ PORT=5000
 HOST=0.0.0.0
 NODE_ENV=development
 MONGODB_URI=mongodb://127.0.0.1:27017/iata-cargo
+MONGODB_DB_NAME=iata-cargo
 JWT_SECRET=your-secure-jwt-secret-key
 CORS_ORIGIN=*
 ```
@@ -176,5 +177,4 @@ npm start
 | `GET` | `/api/master/partners` | Shippers & Consignees directory |
 | `GET` | `/api/master/agent-profile`| Accredited IATA issuing agent profile |
 | `GET` | `/api/dashboard/stats` | Live tonnage, operational KPIs & pipeline |
-
 

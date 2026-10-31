@@ -4,7 +4,9 @@ import { ENV } from './env.js';
 export async function connectDatabase(): Promise<typeof mongoose> {
   try {
     mongoose.set('strictQuery', false);
+    const uriDatabaseName = decodeURIComponent(new URL(ENV.MONGODB_URI).pathname.replace(/^\/+/, ''));
     const conn = await mongoose.connect(ENV.MONGODB_URI, {
+      dbName: ENV.MONGODB_DB_NAME || uriDatabaseName || 'iata-cargo',
       serverSelectionTimeoutMS: 5000,
     });
     console.log(`[MongoDB] Connected successfully to: ${conn.connection.host}/${conn.connection.name}`);
@@ -22,4 +24,3 @@ export async function disconnectDatabase(): Promise<void> {
     console.log('[MongoDB] Disconnected.');
   }
 }
-
