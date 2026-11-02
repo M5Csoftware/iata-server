@@ -19,21 +19,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       const { username, password } = request.body as { username: string; password: string };
       const normalizedUser = (username || '').trim().toLowerCase();
 
-      let user = await User.findOne({ username: normalizedUser });
-
-      // Special fallback if DB was somehow fresh and admin/admin was entered
-      if (!user && normalizedUser === 'admin' && password === 'admin') {
-        user = await User.create({
-          username: 'admin',
-          password: 'admin',
-          fullName: 'System Administrator',
-          role: 'admin',
-          email: 'admin@iata-cargo.org',
-          stationCode: 'DEL (HQ)',
-          isActive: true,
-          permissions: ['dashboard', 'docket', 'stock', 'bookings', 'mawb', 'manifest', 'eawb', 'billing', 'master', 'settings'],
-        });
-      }
+      const user = await User.findOne({ username: normalizedUser });
 
       if (!user) {
         return reply.status(401).send({
@@ -101,4 +87,3 @@ export default async function authRoutes(fastify: FastifyInstance) {
     },
   });
 }
-

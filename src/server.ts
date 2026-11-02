@@ -1,6 +1,5 @@
 import { buildApp } from './app.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
-import { seedDatabase } from './seeds/seeder.js';
 import { ENV } from './config/env.js';
 
 async function startServer() {
@@ -8,8 +7,6 @@ async function startServer() {
     console.log('[Server] Connecting to MongoDB...');
     try {
       await connectDatabase();
-      // Auto seed default data if collections are empty
-      await seedDatabase(false);
     } catch (dbErr: any) {
       console.warn(`[Server] Warning: MongoDB connection failed (${dbErr.message}).`);
       console.warn(`[Server] Server will continue running for health and docs, but MongoDB operations require an active connection.`);
@@ -52,4 +49,3 @@ async function startServer() {
 }
 
 startServer();
-

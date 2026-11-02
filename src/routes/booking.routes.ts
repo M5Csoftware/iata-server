@@ -144,8 +144,8 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
         shipperAddress: `${booking.origin} Air Cargo Logistics Complex`,
         consigneeName: booking.consigneeName,
         consigneeAddress: `${booking.destination} Free Trade Cargo Zone`,
-        issuingAgentName: agentProfile?.name || 'Apex Global Logistics Pvt. Ltd.',
-        issuingAgentIataCode: agentProfile?.iataNumericCode || '14-3-9821/0014',
+        issuingAgentName: agentProfile?.name || '',
+        issuingAgentIataCode: agentProfile?.iataNumericCode || '',
         origin: booking.origin,
         destination: booking.destination,
         pieces: booking.pieces,
@@ -193,4 +193,3 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
     },
   });
 }
-

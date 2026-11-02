@@ -77,9 +77,6 @@ iata-server/
 │   │   ├── master.routes.ts    # /api/master (airlines, airports, partners, profile)
 │   │   ├── dashboard.routes.ts # /api/dashboard/stats (KPIs & pipeline)
 │   │   └── health.routes.ts    # /api/health (system status & DB health)
-│   ├── seeds/
-│   │   ├── seedData.ts         # Default seed data matching frontend
-│   │   └── seeder.ts           # Automatic database seeder
 │   └── utils/
 │       ├── iataMod7.ts         # Resolution 600b Mod-7 calculator & generator
 │       ├── volumetric.ts       # IATA volumetric formula & freight charges
@@ -112,18 +109,12 @@ JWT_SECRET=your-secure-jwt-secret-key
 CORS_ORIGIN=*
 ```
 
-### 3. Seed Database (Optional / Automatic on first run)
-Populates initial airlines, airports, trading partners, Resolution 600b stock, default users (`admin`/`admin`), and agent profile:
-```bash
-npm run seed
-```
-
-### 4. Run Development Server
+### 3. Run Development Server
 ```bash
 npm run dev
 ```
 
-### 5. Build & Run for Production
+### 4. Build & Run for Production
 ```bash
 npm run build
 npm start
@@ -177,4 +168,3 @@ npm start
 | `GET` | `/api/master/partners` | Shippers & Consignees directory |
 | `GET` | `/api/master/agent-profile`| Accredited IATA issuing agent profile |
 | `GET` | `/api/dashboard/stats` | Live tonnage, operational KPIs & pipeline |
-

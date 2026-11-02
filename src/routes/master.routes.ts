@@ -148,22 +148,8 @@ export default async function masterRoutes(fastify: FastifyInstance) {
       summary: 'Get accredited IATA Cargo Issuing Agent profile',
     },
     handler: async (_request, reply) => {
-      let profile = await AgentProfile.findOne();
-      if (!profile) {
-        profile = await AgentProfile.create({
-          name: 'Apex Global Logistics Pvt. Ltd.',
-          iataNumericCode: '14-3-9821/0014',
-          cassAddress: 'CAS-IND-DEL-0941',
-          headOfficeAddress: 'Cargo Complex Terminal 3, Indira Gandhi International Airport',
-          city: 'New Delhi - 110037',
-          country: 'India',
-          phone: '+91-11-2565-9800',
-          email: 'airfreight@apexlogistics.iata.org',
-          gstNumber: '07AAACA9921D1Z8',
-          panNumber: 'AAACA9921D',
-        });
-      }
-      return reply.send({ success: true, profile: profile.toJSON() });
+      const profile = await AgentProfile.findOne();
+      return reply.send({ success: true, profile: profile?.toJSON() ?? null });
     },
   });
 
@@ -185,4 +171,3 @@ export default async function masterRoutes(fastify: FastifyInstance) {
     },
   });
 }
-
