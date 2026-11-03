@@ -1,12 +1,14 @@
 import { FastifyInstance } from 'fastify';
-import { mockStore, FlightManifestItem } from '../store/mockStore.js';
+import { FlightManifest } from '../models/FlightManifest.js';
+import { Mawb } from '../models/Mawb.js';
+import { AuditLog } from '../models/AuditLog.js';
 
 export default async function manifestRoutes(fastify: FastifyInstance) {
   // Get all flight manifests
   fastify.get('/api/manifests', {
     schema: {
       tags: ['Flight Manifests (FFM)'],
-      summary: 'List all flight cargo manifests from mock store',
+      summary: 'List all flight cargo manifests',
       querystring: {
         type: 'object',
         properties: {
@@ -17,12 +19,13 @@ export default async function manifestRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { flightNumber?: string; status?: string };
-      let list = [...mockStore.manifests];
+      const filter: any = {};
 
-      if (query.flightNumber) list = list.filter((m) => m.flightNumber === query.flightNumber);
-      if (query.status) list = list.filter((m) => m.status === query.status?.toUpperCase());
+      if (query.flightNumber) filter.flightNumber = query.flightNumber;
+      if (query.status) filter.status = query.status.toUpperCase();
 
-      return reply.send({ success: true, count: list.length, manifests: list });
+      const manifests = await FlightManifest.find(filter).sort({ createdAt: -1 });
+      return reply.send({ success: true, count: manifests.length, manifests });
     },
   });
 
@@ -49,7 +52,8 @@ export default async function manifestRoutes(fastify: FastifyInstance) {
       const body = request.body as any;
       const mawbNumbers: string[] = body.mawbs || [];
 
-      const linkedMawbs = mockStore.mawbs.filter((m) => mawbNumbers.includes(m.mawbNumber));
+      // Fetch linked MAWBs to calculate aggregate metrics
+      const linkedMawbs = await Mawb.find({ mawbNumber: { $in: mawbNumbers } });
 
       const totalMawbs = linkedMawbs.length;
       const totalHawbs = linkedMawbs.reduce((sum, m) => sum + (m.hawbs?.length || 0), 0);
@@ -57,41 +61,39 @@ export default async function manifestRoutes(fastify: FastifyInstance) {
       const totalGrossWeightKg = linkedMawbs.reduce((sum, m) => sum + (m.grossWeightKg || 0), 0);
 
       const manifestNumber =
-        body.manifestNumber ||
-        `MNF-${new Date().getFullYear()}-${body.origin}-${body.destination}-${Math.floor(10 + Math.random() * 90)}`;
+        body.manifestNumber || `MNF-${new Date().getFullYear()}-${body.origin}-${body.destination}-${Math.floor(10 + Math.random() * 90)}`;
 
-      const newManifest: FlightManifestItem = {
+      const manifest = await FlightManifest.create({
         ...body,
-        id: `mnf-${Date.now()}`,
         manifestNumber,
         totalMawbs,
         totalHawbs,
         totalPieces,
         totalGrossWeightKg,
         status: 'DRAFT',
-        createdAt: new Date().toISOString(),
-      };
-
-      mockStore.manifests.unshift(newManifest);
-
-      // Transition linked MAWBs to MANIFESTED
-      for (const m of linkedMawbs) {
-        m.status = 'MANIFESTED';
-        m.flightNumber = body.flightNumber;
-        m.flightDate = body.flightDate;
-      }
-
-      mockStore.auditLogs.push({
-        id: `aud-${Date.now()}`,
-        entityType: 'MANIFEST',
-        entityId: newManifest.manifestNumber,
-        action: 'CREATE',
-        performedBy: (request.headers['x-user-name'] as string) || 'system',
-        details: { flightNumber: newManifest.flightNumber, totalMawbs },
-        timestamp: new Date().toISOString(),
       });
 
-      return reply.status(201).send({ success: true, manifest: newManifest });
+      // Update status of all linked MAWBs to MANIFESTED
+      await Mawb.updateMany(
+        { mawbNumber: { $in: mawbNumbers } },
+        {
+          $set: {
+            status: 'MANIFESTED',
+            flightNumber: body.flightNumber,
+            flightDate: body.flightDate,
+          },
+        }
+      );
+
+      await AuditLog.create({
+        entityType: 'MANIFEST',
+        entityId: manifest.manifestNumber,
+        action: 'CREATE',
+        performedBy: (request.headers['x-user-name'] as string) || 'system',
+        details: { flightNumber: manifest.flightNumber, totalMawbs },
+      });
+
+      return reply.status(201).send({ success: true, manifest: manifest.toJSON() });
     },
   });
 
@@ -109,29 +111,29 @@ export default async function manifestRoutes(fastify: FastifyInstance) {
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
 
-      const manifest = mockStore.manifests.find((m) => m.id === id || m.manifestNumber === id);
+      const manifest = await FlightManifest.findById(id);
       if (!manifest) {
         return reply.status(404).send({ success: false, error: 'Manifest not found.' });
       }
 
       manifest.status = 'FINALIZED';
       manifest.finalizedAt = new Date().toISOString();
+      await manifest.save();
 
-      mockStore.auditLogs.push({
-        id: `aud-${Date.now()}`,
+      await AuditLog.create({
         entityType: 'MANIFEST',
         entityId: manifest.manifestNumber,
         action: 'UPDATE',
         performedBy: (request.headers['x-user-name'] as string) || 'system',
         details: { status: 'FINALIZED', finalizedAt: manifest.finalizedAt },
-        timestamp: new Date().toISOString(),
       });
 
       return reply.send({
         success: true,
         message: `Manifest ${manifest.manifestNumber} finalized and ramp-locked.`,
-        manifest,
+        manifest: manifest.toJSON(),
       });
     },
   });
 }
+

@@ -1,5 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { mockStore, UserAccount } from '../store/mockStore.js';
+import { User, UserRole } from '../models/User.js';
 
 export default async function userRoutes(fastify: FastifyInstance) {
   // List users
@@ -9,7 +9,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
       summary: 'Get all station users with their role & permissions',
     },
     handler: async (_request, reply) => {
-      const users = mockStore.users.map(({ password, ...u }) => u);
+      const users = await User.find().sort({ createdAt: -1 });
       return reply.send({ success: true, count: users.length, users });
     },
   });
@@ -21,7 +21,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
       summary: 'Create a new station user account',
       body: {
         type: 'object',
-        required: ['username', 'fullName'],
+        required: ['username', 'password', 'fullName'],
         properties: {
           username: { type: 'string' },
           password: { type: 'string' },
@@ -36,8 +36,7 @@ export default async function userRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const body = request.body as any;
-      const normalized = (body.username || '').trim().toLowerCase();
-      const existing = mockStore.users.find((u) => u.username.toLowerCase() === normalized);
+      const existing = await User.findOne({ username: body.username.trim().toLowerCase() });
       if (existing) {
         return reply.status(409).send({
           success: false,
@@ -46,10 +45,9 @@ export default async function userRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const newUser: UserAccount = {
-        id: `usr-${Date.now()}`,
-        username: normalized,
-        password: body.password || 'password123',
+      const user = await User.create({
+        username: body.username.trim().toLowerCase(),
+        password: body.password,
         fullName: body.fullName,
         role: body.role || 'user',
         email: body.email || '',
@@ -57,11 +55,9 @@ export default async function userRoutes(fastify: FastifyInstance) {
         isActive: body.isActive !== undefined ? body.isActive : true,
         permissions: body.permissions || ['dashboard'],
         avatar: body.avatar,
-      };
+      });
 
-      mockStore.users.push(newUser);
-      const { password: _, ...userSafe } = newUser;
-      return reply.status(201).send({ success: true, user: userSafe });
+      return reply.status(201).send({ success: true, user: user.toJSON() });
     },
   });
 
@@ -87,14 +83,17 @@ export default async function userRoutes(fastify: FastifyInstance) {
       const { id } = request.params as { id: string };
       const { permissions } = request.body as { permissions: string[] };
 
-      const user = mockStore.users.find((u) => u.id === id);
+      const user = await User.findByIdAndUpdate(
+        id,
+        { $set: { permissions } },
+        { new: true }
+      );
+
       if (!user) {
         return reply.status(404).send({ success: false, error: 'User not found' });
       }
 
-      user.permissions = permissions;
-      const { password: _, ...userSafe } = user;
-      return reply.send({ success: true, user: userSafe });
+      return reply.send({ success: true, user: user.toJSON() });
     },
   });
 
@@ -118,20 +117,20 @@ export default async function userRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
-      const { role } = request.body as { role: 'admin' | 'user' };
+      const { role } = request.body as { role: UserRole };
 
-      const user = mockStore.users.find((u) => u.id === id);
+      const allTabs = ['dashboard', 'docket', 'stock', 'bookings', 'mawb', 'manifest', 'eawb', 'billing', 'master', 'settings'];
+      const updateData: any = { role };
+      if (role === 'admin') {
+        updateData.permissions = allTabs;
+      }
+
+      const user = await User.findByIdAndUpdate(id, { $set: updateData }, { new: true });
       if (!user) {
         return reply.status(404).send({ success: false, error: 'User not found' });
       }
 
-      user.role = role;
-      if (role === 'admin') {
-        user.permissions = ['dashboard', 'docket', 'stock', 'bookings', 'mawb', 'manifest', 'eawb', 'billing', 'master', 'settings'];
-      }
-
-      const { password: _, ...userSafe } = user;
-      return reply.send({ success: true, user: userSafe });
+      return reply.send({ success: true, user: user.toJSON() });
     },
   });
 
@@ -148,14 +147,15 @@ export default async function userRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
-      const user = mockStore.users.find((u) => u.id === id);
+      const user = await User.findById(id);
       if (!user) {
         return reply.status(404).send({ success: false, error: 'User not found' });
       }
 
       user.isActive = !user.isActive;
-      const { password: _, ...userSafe } = user;
-      return reply.send({ success: true, user: userSafe });
+      await user.save();
+
+      return reply.send({ success: true, user: user.toJSON() });
     },
   });
 
@@ -172,12 +172,12 @@ export default async function userRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
-      const idx = mockStore.users.findIndex((u) => u.id === id);
-      if (idx === -1) {
+      const user = await User.findByIdAndDelete(id);
+      if (!user) {
         return reply.status(404).send({ success: false, error: 'User not found' });
       }
-      mockStore.users.splice(idx, 1);
       return reply.send({ success: true, message: 'User deleted successfully.' });
     },
   });
 }
+
