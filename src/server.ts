@@ -1,9 +1,16 @@
 import { buildApp } from './app.js';
+import { connectDatabase, disconnectDatabase } from './config/database.js';
 import { ENV } from './config/env.js';
 
 async function startServer() {
   try {
-    console.log('[Server] Starting IATA AWB Management Server in Mock Data mode (In-Memory)...');
+    console.log('[Server] Connecting to MongoDB...');
+    try {
+      await connectDatabase();
+    } catch (dbErr: any) {
+      console.warn(`[Server] Warning: MongoDB connection failed (${dbErr.message}).`);
+      console.warn(`[Server] Server will continue running for health and docs, but MongoDB operations require an active connection.`);
+    }
 
     const app = await buildApp();
 

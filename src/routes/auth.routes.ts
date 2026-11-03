@@ -19,23 +19,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       const { username, password } = request.body as { username: string; password: string };
       const normalizedUser = (username || '').trim().toLowerCase();
 
-      let user = mockStore.users.find((u) => u.username.toLowerCase() === normalizedUser);
-
-      // Auto fallback if admin
-      if (!user && normalizedUser === 'admin' && password === 'admin') {
-        user = {
-          id: 'usr-admin',
-          username: 'admin',
-          password: 'admin',
-          fullName: 'System Administrator',
-          role: 'admin',
-          email: 'admin@iata-cargo.org',
-          stationCode: 'DEL (HQ)',
-          isActive: true,
-          permissions: ['dashboard', 'docket', 'stock', 'bookings', 'mawb', 'manifest', 'eawb', 'billing', 'master', 'settings'],
-        };
-        mockStore.users.push(user);
-      }
+      const user = await User.findOne({ username: normalizedUser });
 
       if (!user) {
         return reply.status(401).send({

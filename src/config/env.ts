@@ -6,7 +6,7 @@ export const ENV = {
   HOST: process.env.HOST || '0.0.0.0',
   NODE_ENV: process.env.NODE_ENV || 'development',
   MONGODB_URI: process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/iata-db',
+  MONGODB_DB_NAME: process.env.MONGODB_DB_NAME,
   JWT_SECRET: process.env.JWT_SECRET || 'iata-cargo-super-secret-jwt-key-2026',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
 };
-

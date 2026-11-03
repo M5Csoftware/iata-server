@@ -157,7 +157,8 @@ export default async function masterRoutes(fastify: FastifyInstance) {
       summary: 'Get accredited IATA Cargo Issuing Agent profile',
     },
     handler: async (_request, reply) => {
-      return reply.send({ success: true, profile: mockStore.agentProfile });
+      const profile = await AgentProfile.findOne();
+      return reply.send({ success: true, profile: profile?.toJSON() ?? null });
     },
   });
 
