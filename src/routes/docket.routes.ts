@@ -106,9 +106,11 @@ export default async function docketRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { status?: string; search?: string };
-      const filter: any = {};
+      let list = [...mockStore.dockets];
 
-      if (query.status) filter.status = query.status;
+      if (query.status) {
+        list = list.filter((d) => d.status === query.status);
+      }
       if (query.search) {
         filter.$or = [
           { docketNumber: { $regex: query.search, $options: "i" } },
@@ -118,8 +120,7 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         ];
       }
 
-      const dockets = await Docket.find(filter).sort({ createdAt: -1 });
-      return reply.send({ success: true, count: dockets.length, dockets });
+      return reply.send({ success: true, count: list.length, dockets: list });
     },
   });
 
@@ -136,13 +137,13 @@ export default async function docketRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
-      const docket = await Docket.findById(id);
+      const docket = mockStore.dockets.find((d) => d.id === id || d.docketNumber === id);
       if (!docket) {
         return reply
           .status(404)
           .send({ success: false, error: "Docket not found." });
       }
-      return reply.send({ success: true, docket: docket.toJSON() });
+      return reply.send({ success: true, docket });
     },
   });
 
@@ -284,7 +285,7 @@ export default async function docketRoutes(fastify: FastifyInstance) {
       const { airlinePrefix } =
         (request.body as { airlinePrefix?: string }) || {};
 
-      const docket = await Docket.findById(id);
+      const docket = mockStore.dockets.find((d) => d.id === id || d.docketNumber === id);
       if (!docket) {
         return reply
           .status(404)
@@ -325,10 +326,10 @@ export default async function docketRoutes(fastify: FastifyInstance) {
 
       return reply.send({
         success: true,
-        message: `AWB ${mawb.mawbNumber} allocated to Docket ${docket.docketNumber}.`,
-        docket: docket.toJSON(),
-        mawb: mawb.toJSON(),
-        invoice: invoice.toJSON(),
+        message: `AWB ${newMawb.mawbNumber} allocated to Docket ${docket.docketNumber}.`,
+        docket,
+        mawb: newMawb,
+        invoice: newInvoice,
       });
     },
   });

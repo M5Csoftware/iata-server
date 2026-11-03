@@ -36,9 +36,11 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { status?: string; search?: string };
-      const filter: any = {};
+      let list = [...mockStore.mawbs];
 
-      if (query.status) filter.status = query.status.toUpperCase();
+      if (query.status) {
+        list = list.filter((m) => m.status === query.status?.toUpperCase());
+      }
       if (query.search) {
         filter.$or = [
           { mawbNumber: { $regex: query.search, $options: "i" } },
@@ -48,8 +50,7 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
         ];
       }
 
-      const mawbs = await Mawb.find(filter).sort({ createdAt: -1 });
-      return reply.send({ success: true, count: mawbs.length, mawbs });
+      return reply.send({ success: true, count: list.length, mawbs: list });
     },
   });
 
@@ -66,13 +67,13 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id } = request.params as { id: string };
-      const mawb = await Mawb.findById(id);
+      const mawb = mockStore.mawbs.find((m) => m.id === id || m.mawbNumber === id);
       if (!mawb) {
         return reply
           .status(404)
           .send({ success: false, error: "MAWB not found." });
       }
-      return reply.send({ success: true, mawb: mawb.toJSON() });
+      return reply.send({ success: true, mawb });
     },
   });
 
@@ -84,7 +85,7 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const body = request.body as any;
-      const mawb = await Mawb.create({
+      const newMawb: MawbItem = {
         ...body,
         status: body.status || "ISSUED",
         issuedAt: body.issuedAt || new Date().toISOString().split("T")[0],
@@ -98,7 +99,7 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
         details: { mawbNumber: mawb.mawbNumber, destination: mawb.destination },
       });
 
-      return reply.status(201).send({ success: true, mawb: mawb.toJSON() });
+      return reply.status(201).send({ success: true, mawb: newMawb });
     },
   });
 
@@ -147,7 +148,7 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
       const { id } = request.params as { id: string };
       const body = request.body as any;
 
-      const mawb = await Mawb.findById(id);
+      const mawb = mockStore.mawbs.find((m) => m.id === id || m.mawbNumber === id);
       if (!mawb) {
         return reply
           .status(404)
@@ -205,7 +206,6 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
       };
 
       mawb.hawbs.push(newHawb);
-      await mawb.save();
 
       // The saved sub-document (with its real _id / id)
       const savedHawb = (mawb.hawbs[mawb.hawbs.length - 1] as any).toJSON();
@@ -396,7 +396,7 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const { id, hawbId } = request.params as { id: string; hawbId: string };
-      const mawb = await Mawb.findById(id);
+      const mawb = mockStore.mawbs.find((m) => m.id === id || m.mawbNumber === id);
       if (!mawb) {
         return reply
           .status(404)
@@ -455,7 +455,7 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
       const { reason = "Cancelled by operator" } =
         (request.body as { reason?: string }) || {};
 
-      const mawb = await Mawb.findById(id);
+      const mawb = mockStore.mawbs.find((m) => m.id === id || m.mawbNumber === id);
       if (!mawb) {
         return reply
           .status(404)
@@ -485,12 +485,13 @@ export default async function mawbRoutes(fastify: FastifyInstance) {
         action: "VOID",
         performedBy: (request.headers["x-user-name"] as string) || "system",
         reason,
+        timestamp: new Date().toISOString(),
       });
 
       return reply.send({
         success: true,
-        message: `MAWB ${mawb.mawbNumber} permanently voided. Serial number retired.`,
-        mawb: mawb.toJSON(),
+        message: `MAWB ${mawb.mawbNumber} permanently voided. Serial retired.`,
+        mawb,
       });
     },
   });

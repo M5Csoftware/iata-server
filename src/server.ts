@@ -21,6 +21,7 @@ async function startServer() {
 
     console.log(`\n========================================================`);
     console.log(` ✈️  IATA AWB Management Server is running!`);
+    console.log(` 🚀 Mode:              In-Memory Mock Data (No MongoDB needed)`);
     console.log(` 🌐 Server URL:        ${address}`);
     console.log(` 📚 API Documentation: ${address}/documentation`);
     console.log(` 🩺 Health Check:      ${address}/api/health`);
@@ -33,8 +34,7 @@ async function startServer() {
         console.log(`\n[Server] Received ${signal}. Gracefully shutting down...`);
         try {
           await app.close();
-          await disconnectDatabase();
-          console.log('[Server] Server and database connections closed cleanly.');
+          console.log('[Server] Server closed cleanly.');
           process.exit(0);
         } catch (err) {
           console.error('[Server] Error during shutdown:', err);

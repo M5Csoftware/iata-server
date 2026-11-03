@@ -1,60 +1,37 @@
 import { FastifyInstance } from 'fastify';
-import { AwbStock } from '../models/AwbStock.js';
-import { Mawb } from '../models/Mawb.js';
-import { Booking } from '../models/Booking.js';
-import { Docket } from '../models/Docket.js';
-import { FlightManifest } from '../models/FlightManifest.js';
-import { EawbMessage } from '../models/EawbMessage.js';
-import { CassInvoice } from '../models/CassInvoice.js';
+import { mockStore } from '../store/mockStore.js';
 
 export default async function dashboardRoutes(fastify: FastifyInstance) {
   fastify.get('/api/dashboard/stats', {
     schema: {
       tags: ['Dashboard & Analytics'],
-      summary: 'Get operational KPIs, stage pipeline metrics & recent shipments',
+      summary: 'Get operational KPIs, stage pipeline metrics & recent shipments from mock store',
     },
     handler: async (_request, reply) => {
-      const [
-        availableStockCount,
-        allottedStockCount,
-        issuedMawbCount,
-        manifestedMawbCount,
-        departedMawbCount,
-        pendingBookingsCount,
-        totalBookingsCount,
-        docketsCount,
-        manifestsCount,
-        eawbTotal,
-        eawbAck,
-        invoicesTotal,
-        invoicesReconciled,
-        recentMawbs,
-        recentDockets,
-      ] = await Promise.all([
-        AwbStock.countDocuments({ status: 'AVAILABLE' }),
-        AwbStock.countDocuments({ status: 'ALLOTTED' }),
-        Mawb.countDocuments({ status: 'ISSUED' }),
-        Mawb.countDocuments({ status: 'MANIFESTED' }),
-        Mawb.countDocuments({ status: 'DEPARTED' }),
-        Booking.countDocuments({ status: 'PENDING_AWB' }),
-        Booking.countDocuments(),
-        Docket.countDocuments(),
-        FlightManifest.countDocuments(),
-        EawbMessage.countDocuments(),
-        EawbMessage.countDocuments({ status: 'ACKNOWLEDGED' }),
-        CassInvoice.countDocuments(),
-        CassInvoice.countDocuments({ cassReconciliationStatus: 'RECONCILED' }),
-        Mawb.find().sort({ createdAt: -1 }).limit(5),
-        Docket.find().sort({ createdAt: -1 }).limit(5),
-      ]);
+      const availableStockCount = mockStore.stock.filter((s) => s.status === 'AVAILABLE').length;
+      const allottedStockCount = mockStore.stock.filter((s) => s.status === 'ALLOTTED').length;
+      const issuedMawbCount = mockStore.mawbs.filter((m) => m.status === 'ISSUED').length;
+      const manifestedMawbCount = mockStore.mawbs.filter((m) => m.status === 'MANIFESTED').length;
+      const departedMawbCount = mockStore.mawbs.filter((m) => m.status === 'DEPARTED').length;
+      const pendingBookingsCount = mockStore.bookings.filter((b) => b.status === 'PENDING_AWB').length;
+      const totalBookingsCount = mockStore.bookings.length;
+      const docketsCount = mockStore.dockets.length;
+      const manifestsCount = mockStore.manifests.length;
 
-      // Calculate total live gross tonnage
-      const liveMawbs = await Mawb.find({ status: { $in: ['ISSUED', 'MANIFESTED', 'DEPARTED'] } }).select('grossWeightKg hawbs');
+      const eawbTotal = mockStore.eawbMessages.length;
+      const eawbAck = mockStore.eawbMessages.filter((m) => m.status === 'ACKNOWLEDGED').length;
+      const invoicesTotal = mockStore.invoices.length;
+      const invoicesReconciled = mockStore.invoices.filter((i) => i.cassReconciliationStatus === 'RECONCILED').length;
+
+      const liveMawbs = mockStore.mawbs.filter((m) => ['ISSUED', 'MANIFESTED', 'DEPARTED'].includes(m.status));
       const totalLiveGrossWeightKg = liveMawbs.reduce((sum, m) => sum + (m.grossWeightKg || 0), 0);
       const activeConsolidationsCount = liveMawbs.filter((m) => m.hawbs && m.hawbs.length > 0).length;
 
       const eawbSuccessRate = eawbTotal > 0 ? parseFloat(((eawbAck / eawbTotal) * 100).toFixed(1)) : 100;
       const cassReconciledRate = invoicesTotal > 0 ? parseFloat(((invoicesReconciled / invoicesTotal) * 100).toFixed(1)) : 100;
+
+      const recentMawbs = mockStore.mawbs.slice(0, 5);
+      const recentDockets = mockStore.dockets.slice(0, 5);
 
       return reply.send({
         success: true,
