@@ -1,5 +1,10 @@
 import { FastifyInstance } from 'fastify';
-import { mockStore, BookingItem, MawbItem, CassInvoiceItem } from '../store/mockStore.js';
+import { Booking } from '../models/Booking.js';
+import { AwbStock } from '../models/AwbStock.js';
+import { Mawb } from '../models/Mawb.js';
+import { CassInvoice } from '../models/CassInvoice.js';
+import { AgentProfile } from '../models/MasterData.js';
+import { AuditLog } from '../models/AuditLog.js';
 import { calculateVolumetricWeight, calculateChargeableWeight, calculateFreightCharges } from '../utils/volumetric.js';
 
 export default async function bookingRoutes(fastify: FastifyInstance) {
@@ -7,7 +12,7 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
   fastify.get('/api/bookings', {
     schema: {
       tags: ['Bookings & Dimensional Cubing'],
-      summary: 'List all air cargo bookings from mock store',
+      summary: 'List all air cargo bookings',
       querystring: {
         type: 'object',
         properties: {
@@ -18,22 +23,19 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { status?: string; search?: string };
-      let list = [...mockStore.bookings];
+      const filter: any = {};
 
-      if (query.status) {
-        list = list.filter((b) => b.status === query.status);
-      }
+      if (query.status) filter.status = query.status;
       if (query.search) {
-        const q = query.search.toLowerCase();
-        list = list.filter(
-          (b) =>
-            b.bookingRef.toLowerCase().includes(q) ||
-            b.shipperName.toLowerCase().includes(q) ||
-            b.consigneeName.toLowerCase().includes(q)
-        );
+        filter.$or = [
+          { bookingRef: { $regex: query.search, $options: 'i' } },
+          { shipperName: { $regex: query.search, $options: 'i' } },
+          { consigneeName: { $regex: query.search, $options: 'i' } },
+        ];
       }
 
-      return reply.send({ success: true, count: list.length, bookings: list });
+      const bookings = await Booking.find(filter).sort({ createdAt: -1 });
+      return reply.send({ success: true, count: bookings.length, bookings });
     },
   });
 
@@ -49,33 +51,26 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
       const volumetricWeightKg = calculateVolumetricWeight(body.dimensions || []);
       const actualWeightKg = Number(body.actualWeightKg) || 0;
       const chargeableWeightKg = calculateChargeableWeight(actualWeightKg, volumetricWeightKg);
-      const bookingRef =
-        body.bookingRef || `BKG-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+      const bookingRef = body.bookingRef || `BKG-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      const newBooking: BookingItem = {
+      const booking = await Booking.create({
         ...body,
-        id: `bkg-${Date.now()}`,
         bookingRef,
         volumetricWeightKg,
         actualWeightKg,
         chargeableWeightKg,
         status: 'PENDING_AWB',
-        createdAt: new Date().toISOString(),
-      };
+      });
 
-      mockStore.bookings.unshift(newBooking);
-
-      mockStore.auditLogs.push({
-        id: `aud-${Date.now()}`,
+      await AuditLog.create({
         entityType: 'BOOKING',
-        entityId: newBooking.bookingRef,
+        entityId: booking.bookingRef,
         action: 'CREATE',
         performedBy: (request.headers['x-user-name'] as string) || 'system',
         details: { chargeableWeightKg },
-        timestamp: new Date().toISOString(),
       });
 
-      return reply.status(201).send({ success: true, booking: newBooking });
+      return reply.status(201).send({ success: true, booking: booking.toJSON() });
     },
   });
 
@@ -100,7 +95,7 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
       const { id } = request.params as { id: string };
       const { airlinePrefix } = (request.body as { airlinePrefix?: string }) || {};
 
-      const booking = mockStore.bookings.find((b) => b.id === id || b.bookingRef === id);
+      const booking = await Booking.findById(id);
       if (!booking) {
         return reply.status(404).send({ success: false, error: 'Booking not found.' });
       }
@@ -113,12 +108,10 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const availableStock = mockStore.stock.find((s) => {
-        if (s.status !== 'AVAILABLE') return false;
-        if (airlinePrefix && s.airlinePrefix !== airlinePrefix) return false;
-        return true;
-      });
+      const stockFilter: any = { status: 'AVAILABLE' };
+      if (airlinePrefix) stockFilter.airlinePrefix = airlinePrefix;
 
+      const availableStock = await AwbStock.findOne(stockFilter).sort({ createdAt: 1 });
       if (!availableStock) {
         return reply.status(400).send({
           success: false,
@@ -130,21 +123,23 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
       // Mark stock ISSUED
       availableStock.status = 'ISSUED';
       availableStock.issuedAt = new Date().toISOString().split('T')[0];
+      await availableStock.save();
 
       // Update booking
       booking.status = 'AWB_ISSUED';
       booking.assignedAwb = availableStock.fullAwbNumber;
+      await booking.save();
 
       // Pricing
       const pricing = calculateFreightCharges({ chargeableWeightKg: booking.chargeableWeightKg });
+      const agentProfile = await AgentProfile.findOne();
 
       // Create MAWB
-      const newMawb: MawbItem = {
-        id: `mawb-${Date.now()}`,
+      const mawb = await Mawb.create({
         mawbNumber: availableStock.fullAwbNumber,
         airlinePrefix: availableStock.airlinePrefix,
         serialNumber: availableStock.airlineNumber,
-        bookingId: booking.id,
+        bookingId: booking._id.toString(),
         shipperName: booking.shipperName,
         shipperAddress: `${booking.origin} Air Cargo Logistics Complex`,
         consigneeName: booking.consigneeName,
@@ -169,16 +164,12 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
         status: 'ISSUED',
         issuedAt: new Date().toISOString().split('T')[0],
         hawbs: [],
-        fwbSent: false,
-        createdAt: new Date().toISOString(),
-      };
-      mockStore.mawbs.unshift(newMawb);
+      });
 
       // Create CASS Invoice
-      const newInvoice: CassInvoiceItem = {
-        id: `inv-${Date.now()}`,
+      const invoice = await CassInvoice.create({
         invoiceNumber: `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
-        mawbNumber: newMawb.mawbNumber,
+        mawbNumber: mawb.mawbNumber,
         customerName: booking.shipperName,
         date: new Date().toISOString().split('T')[0],
         freightCharges: pricing.freightAmount,
@@ -190,16 +181,14 @@ export default async function bookingRoutes(fastify: FastifyInstance) {
         totalAmount: pricing.totalAmount,
         cassReconciliationStatus: 'PENDING_MATCH',
         paymentStatus: 'UNPAID',
-        createdAt: new Date().toISOString(),
-      };
-      mockStore.invoices.unshift(newInvoice);
+      });
 
       return reply.send({
         success: true,
-        message: `MAWB ${newMawb.mawbNumber} issued for Booking ${booking.bookingRef}.`,
-        booking,
-        mawb: newMawb,
-        invoice: newInvoice,
+        message: `MAWB ${mawb.mawbNumber} successfully issued for Booking ${booking.bookingRef}.`,
+        booking: booking.toJSON(),
+        mawb: mawb.toJSON(),
+        invoice: invoice.toJSON(),
       });
     },
   });
