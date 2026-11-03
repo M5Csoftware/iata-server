@@ -1,11 +1,11 @@
 import { FastifyInstance } from 'fastify';
-import { User } from '../models/User.js';
+import { mockStore, UserAccount } from '../store/mockStore.js';
 
 export default async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/api/auth/login', {
     schema: {
       tags: ['Authentication'],
-      summary: 'Authenticate station user or administrator',
+      summary: 'Authenticate station user or administrator using mock store',
       body: {
         type: 'object',
         required: ['username', 'password'],
@@ -19,21 +19,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
       const { username, password } = request.body as { username: string; password: string };
       const normalizedUser = (username || '').trim().toLowerCase();
 
-      let user = await User.findOne({ username: normalizedUser });
-
-      // Special fallback if DB was somehow fresh and admin/admin was entered
-      if (!user && normalizedUser === 'admin' && password === 'admin') {
-        user = await User.create({
-          username: 'admin',
-          password: 'admin',
-          fullName: 'System Administrator',
-          role: 'admin',
-          email: 'admin@iata-cargo.org',
-          stationCode: 'DEL (HQ)',
-          isActive: true,
-          permissions: ['dashboard', 'docket', 'stock', 'bookings', 'mawb', 'manifest', 'eawb', 'billing', 'master', 'settings'],
-        });
-      }
+      const user = await User.findOne({ username: normalizedUser });
 
       if (!user) {
         return reply.status(401).send({
@@ -51,8 +37,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
         });
       }
 
-      const isMatch = await user.comparePassword(password);
-      if (!isMatch) {
+      if (user.password && user.password !== password) {
         return reply.status(401).send({
           success: false,
           error: 'Invalid Credentials',
@@ -61,15 +46,17 @@ export default async function authRoutes(fastify: FastifyInstance) {
       }
 
       const token = fastify.jwt.sign({
-        id: user._id.toString(),
+        id: user.id,
         username: user.username,
         role: user.role,
       });
 
+      const { password: _, ...userSafe } = user;
+
       return reply.send({
         success: true,
         token,
-        user: user.toJSON(),
+        user: userSafe,
       });
     },
   });
@@ -83,11 +70,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const reqUser = request.user as { id: string; username: string };
-      const user = await User.findById(reqUser.id);
+      const user = mockStore.users.find((u) => u.id === reqUser.id || u.username === reqUser.username);
       if (!user) {
         return reply.status(404).send({ success: false, error: 'User not found' });
       }
-      return reply.send({ success: true, user: user.toJSON() });
+      const { password: _, ...userSafe } = user;
+      return reply.send({ success: true, user: userSafe });
     },
   });
 
@@ -101,4 +89,3 @@ export default async function authRoutes(fastify: FastifyInstance) {
     },
   });
 }
-

@@ -1,6 +1,5 @@
 import { FastifyInstance } from 'fastify';
-import { AwbStock } from '../models/AwbStock.js';
-import { AuditLog } from '../models/AuditLog.js';
+import { mockStore, AwbStockItem } from '../store/mockStore.js';
 import { generateAwbSeries, validateIataAwbNumber } from '../utils/iataMod7.js';
 
 export default async function stockRoutes(fastify: FastifyInstance) {
@@ -8,7 +7,7 @@ export default async function stockRoutes(fastify: FastifyInstance) {
   fastify.get('/api/stock', {
     schema: {
       tags: ['AWB Stock Management'],
-      summary: 'Get AWB stock inventory with filtering',
+      summary: 'Get AWB stock inventory with filtering from mock store',
       querystring: {
         type: 'object',
         properties: {
@@ -20,20 +19,20 @@ export default async function stockRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { airlinePrefix?: string; status?: string; search?: string };
-      const filter: any = {};
+      let list = [...mockStore.stock];
 
       if (query.airlinePrefix) {
-        filter.airlinePrefix = query.airlinePrefix;
+        list = list.filter((s) => s.airlinePrefix === query.airlinePrefix);
       }
       if (query.status) {
-        filter.status = query.status.toUpperCase();
+        list = list.filter((s) => s.status === query.status?.toUpperCase());
       }
       if (query.search) {
-        filter.fullAwbNumber = { $regex: query.search, $options: 'i' };
+        const q = query.search.toLowerCase();
+        list = list.filter((s) => s.fullAwbNumber.toLowerCase().includes(q));
       }
 
-      const stock = await AwbStock.find(filter).sort({ createdAt: -1 });
-      return reply.send({ success: true, count: stock.length, stock });
+      return reply.send({ success: true, count: list.length, stock: list });
     },
   });
 
@@ -67,38 +66,30 @@ export default async function stockRoutes(fastify: FastifyInstance) {
         });
       }
 
-      if (toSerial7 - fromSerial7 > 1000) {
-        return reply.status(400).send({
-          success: false,
-          error: 'Range Limit Exceeded',
-          message: 'Cannot generate more than 1000 AWB numbers at a time.',
-        });
-      }
-
       const generated = generateAwbSeries(airlinePrefix, fromSerial7, toSerial7);
-      const existingAwbs = await AwbStock.find({
-        fullAwbNumber: { $in: generated.map((g) => g.fullAwbNumber) },
-      }).select('fullAwbNumber');
+      const existingSet = new Set(mockStore.stock.map((s) => s.fullAwbNumber));
 
-      const existingSet = new Set(existingAwbs.map((e) => e.fullAwbNumber));
-      const toInsert = generated
-        .filter((g) => !existingSet.has(g.fullAwbNumber))
-        .map((g) => ({
-          airlinePrefix: g.airlinePrefix,
-          airlineNumber: g.airlineNumber,
-          fullAwbNumber: g.fullAwbNumber,
-          status: 'AVAILABLE',
-        }));
-
-      if (toInsert.length > 0) {
-        await AwbStock.insertMany(toInsert);
+      const toInsert: AwbStockItem[] = [];
+      for (const g of generated) {
+        if (!existingSet.has(g.fullAwbNumber)) {
+          toInsert.push({
+            id: `stk-${Date.now()}-${g.airlineNumber}`,
+            airlinePrefix: g.airlinePrefix,
+            airlineNumber: g.airlineNumber,
+            fullAwbNumber: g.fullAwbNumber,
+            status: 'AVAILABLE',
+            createdAt: new Date().toISOString(),
+          });
+        }
       }
+
+      mockStore.stock.push(...toInsert);
 
       return reply.status(201).send({
         success: true,
         totalRequested: generated.length,
         addedCount: toInsert.length,
-        alreadyExistedCount: existingSet.size,
+        alreadyExistedCount: generated.length - toInsert.length,
         message: `Generated ${toInsert.length} new Resolution 600b AWB numbers.`,
       });
     },
@@ -146,7 +137,7 @@ export default async function stockRoutes(fastify: FastifyInstance) {
       const { id } = request.params as { id: string };
       const { reason } = request.body as { reason: string };
 
-      const stockItem = await AwbStock.findById(id);
+      const stockItem = mockStore.stock.find((s) => s.id === id || s.fullAwbNumber === id);
       if (!stockItem) {
         return reply.status(404).send({ success: false, error: 'AWB stock number not found.' });
       }
@@ -157,21 +148,22 @@ export default async function stockRoutes(fastify: FastifyInstance) {
 
       stockItem.status = 'VOID';
       stockItem.voidReason = reason;
-      await stockItem.save();
 
-      await AuditLog.create({
+      mockStore.auditLogs.push({
+        id: `aud-${Date.now()}`,
         entityType: 'AWB_STOCK',
         entityId: stockItem.fullAwbNumber,
         action: 'VOID',
         performedBy: (request.headers['x-user-name'] as string) || 'operator',
         reason,
         details: { fullAwbNumber: stockItem.fullAwbNumber },
+        timestamp: new Date().toISOString(),
       });
 
       return reply.send({
         success: true,
-        message: `AWB ${stockItem.fullAwbNumber} permanently voided. Number cannot be reissued.`,
-        stock: stockItem.toJSON(),
+        message: `AWB ${stockItem.fullAwbNumber} permanently voided. Serial cannot be reissued.`,
+        stock: stockItem,
       });
     },
   });
@@ -190,12 +182,12 @@ export default async function stockRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const query = request.query as { airlinePrefix?: string };
-      const filter: any = { status: 'AVAILABLE' };
-      if (query.airlinePrefix) {
-        filter.airlinePrefix = query.airlinePrefix;
-      }
+      const available = mockStore.stock.find((s) => {
+        if (s.status !== 'AVAILABLE') return false;
+        if (query.airlinePrefix && s.airlinePrefix !== query.airlinePrefix) return false;
+        return true;
+      });
 
-      const available = await AwbStock.findOne(filter).sort({ createdAt: 1 });
       if (!available) {
         return reply.status(404).send({
           success: false,
@@ -204,8 +196,7 @@ export default async function stockRoutes(fastify: FastifyInstance) {
         });
       }
 
-      return reply.send({ success: true, stock: available.toJSON() });
+      return reply.send({ success: true, stock: available });
     },
   });
 }
-

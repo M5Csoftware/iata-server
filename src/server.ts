@@ -1,6 +1,5 @@
 import { buildApp } from './app.js';
 import { connectDatabase, disconnectDatabase } from './config/database.js';
-import { seedDatabase } from './seeds/seeder.js';
 import { ENV } from './config/env.js';
 
 async function startServer() {
@@ -8,8 +7,6 @@ async function startServer() {
     console.log('[Server] Connecting to MongoDB...');
     try {
       await connectDatabase();
-      // Auto seed default data if collections are empty
-      await seedDatabase(false);
     } catch (dbErr: any) {
       console.warn(`[Server] Warning: MongoDB connection failed (${dbErr.message}).`);
       console.warn(`[Server] Server will continue running for health and docs, but MongoDB operations require an active connection.`);
@@ -24,6 +21,7 @@ async function startServer() {
 
     console.log(`\n========================================================`);
     console.log(` ✈️  IATA AWB Management Server is running!`);
+    console.log(` 🚀 Mode:              In-Memory Mock Data (No MongoDB needed)`);
     console.log(` 🌐 Server URL:        ${address}`);
     console.log(` 📚 API Documentation: ${address}/documentation`);
     console.log(` 🩺 Health Check:      ${address}/api/health`);
@@ -36,8 +34,7 @@ async function startServer() {
         console.log(`\n[Server] Received ${signal}. Gracefully shutting down...`);
         try {
           await app.close();
-          await disconnectDatabase();
-          console.log('[Server] Server and database connections closed cleanly.');
+          console.log('[Server] Server closed cleanly.');
           process.exit(0);
         } catch (err) {
           console.error('[Server] Error during shutdown:', err);
@@ -52,4 +49,3 @@ async function startServer() {
 }
 
 startServer();
-
