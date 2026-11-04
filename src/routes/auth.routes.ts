@@ -1,11 +1,11 @@
 import { FastifyInstance } from 'fastify';
-import { mockStore, UserAccount } from '../store/mockStore.js';
+import { User } from '../models/User.js';
 
 export default async function authRoutes(fastify: FastifyInstance) {
   fastify.post('/api/auth/login', {
     schema: {
       tags: ['Authentication'],
-      summary: 'Authenticate station user or administrator using mock store',
+      summary: 'Authenticate station user or administrator',
       body: {
         type: 'object',
         required: ['username', 'password'],
@@ -37,7 +37,8 @@ export default async function authRoutes(fastify: FastifyInstance) {
         });
       }
 
-      if (user.password && user.password !== password) {
+      const isMatch = await user.comparePassword(password);
+      if (!isMatch) {
         return reply.status(401).send({
           success: false,
           error: 'Invalid Credentials',
@@ -46,17 +47,15 @@ export default async function authRoutes(fastify: FastifyInstance) {
       }
 
       const token = fastify.jwt.sign({
-        id: user.id,
+        id: user._id.toString(),
         username: user.username,
         role: user.role,
       });
 
-      const { password: _, ...userSafe } = user;
-
       return reply.send({
         success: true,
         token,
-        user: userSafe,
+        user: user.toJSON(),
       });
     },
   });
@@ -70,12 +69,11 @@ export default async function authRoutes(fastify: FastifyInstance) {
     },
     handler: async (request, reply) => {
       const reqUser = request.user as { id: string; username: string };
-      const user = mockStore.users.find((u) => u.id === reqUser.id || u.username === reqUser.username);
+      const user = await User.findById(reqUser.id);
       if (!user) {
         return reply.status(404).send({ success: false, error: 'User not found' });
       }
-      const { password: _, ...userSafe } = user;
-      return reply.send({ success: true, user: userSafe });
+      return reply.send({ success: true, user: user.toJSON() });
     },
   });
 
