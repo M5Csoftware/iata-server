@@ -173,12 +173,14 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         handlingFee: body.docketFee || 250,
       });
 
-      const docketNumber =
-        body.docketNumber ||
-        `DKT-${body.origin || "DEL"}-${new Date().getFullYear().toString().slice(2)}${String(new Date().getMonth() + 1).padStart(2, "0")}-${Math.floor(1000 + Math.random() * 9000)}`;
+      // ✅ Auto-generate docket number based on DB count + Origin/Destination
+      const count = await Docket.countDocuments();
+      const sequenceNum = (count + 101).toString().padStart(4, "0");
+      const originCode = (body.origin || "DEL").toUpperCase().slice(0, 3);
+      const destCode = (body.destination || "LHR").toUpperCase().slice(0, 3);
+      const generatedDocketNumber = `DKT-${originCode}-${destCode}-${sequenceNum}`;
 
       // If the form picked an AWB, claim it atomically BEFORE saving the docket
-      // so the same AWB can never be used twice.
       let claimedStock: any = null;
       if (body.assignedAwb) {
         claimedStock = await AwbStock.findOneAndUpdate(
@@ -200,7 +202,7 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         docket = await Docket.create({
           ...body,
           assignedAwb: undefined, // set below once the MAWB is issued
-          docketNumber,
+          docketNumber: generatedDocketNumber, // Overrides any fake frontend number
           bookingDate: body.bookingDate || today(),
           volumetricWeightKg,
           actualWeightKg,
@@ -217,7 +219,6 @@ export default async function docketRoutes(fastify: FastifyInstance) {
           status: "BOOKED",
         });
       } catch (err) {
-        // Docket was not saved – give the AWB back to stock
         if (claimedStock) {
           await AwbStock.updateOne(
             { _id: claimedStock._id },
@@ -235,8 +236,6 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         details: { chargeableWeightKg, totalAmount: docket.totalAmount },
       });
 
-      // Chosen AWB -> issue MAWB + CASS invoice right away so the docket
-      // shows up in MAWB / Manifest / Dashboard immediately.
       let mawb: any = null;
       let invoice: any = null;
       if (claimedStock) {
@@ -302,7 +301,6 @@ export default async function docketRoutes(fastify: FastifyInstance) {
       const stockFilter: any = { status: "AVAILABLE" };
       if (airlinePrefix) stockFilter.airlinePrefix = airlinePrefix;
 
-      // Claim the oldest available AWB atomically
       const availableStock = await AwbStock.findOneAndUpdate(
         stockFilter,
         { $set: { status: "ISSUED", issuedAt: today() } },
