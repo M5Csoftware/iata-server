@@ -13,6 +13,7 @@ import bookingRoutes from "./routes/booking.routes.js";
 import mawbRoutes from "./routes/mawb.routes.js";
 import manifestRoutes from "./routes/manifest.routes.js";
 import eawbRoutes from "./routes/eawb.routes.js";
+import invoiceFetchRoutes from './routes/invoiceFetch.js';
 
 // ✅ Both files, different prefixes — no collision
 import { invoiceRoutes } from "./routes/invoices.js";
@@ -41,6 +42,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await fastify.register(mawbRoutes);
   await fastify.register(manifestRoutes);
   await fastify.register(eawbRoutes);
+  await fastify.register(invoiceFetchRoutes);
 
   // ✅ InvoiceGenerationView → /api/invoices/*
   await fastify.register(invoiceRoutes, { prefix: "/api/invoices" });

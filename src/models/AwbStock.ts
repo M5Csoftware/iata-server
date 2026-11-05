@@ -1,11 +1,13 @@
-import mongoose, { Schema, Document } from 'mongoose';
+import mongoose, { Schema, Document } from "mongoose";
 
-export type AwbStockStatus = 'AVAILABLE' | 'ALLOTTED' | 'ISSUED' | 'VOID';
+export type AwbStockStatus = "AVAILABLE" | "ALLOTTED" | "ISSUED" | "VOID";
 
 export interface IAwbStock extends Document {
-  airlinePrefix: string;
-  airlineNumber: string;
-  fullAwbNumber: string;
+  airlinePrefix: string; // 3-digit IATA prefix e.g. "098"
+  airlineCode?: string; // 2-letter IATA code  e.g. "AI"
+  airlineName?: string; // e.g. "Air India"
+  airlineNumber: string; // 8-digit serial (7 digits + Mod-7 check digit)
+  fullAwbNumber: string; // "<prefix>-<8-digit>" or "<prefix><8-digit>"
   status: AwbStockStatus;
   allocatedTo?: string;
   issuedAt?: string;
@@ -16,16 +18,24 @@ export interface IAwbStock extends Document {
 
 const AwbStockSchema = new Schema<IAwbStock>(
   {
-    airlinePrefix: { type: String, required: true, trim: true },
+    airlinePrefix: { type: String, required: true, trim: true, index: true },
+    airlineCode: { type: String, trim: true, default: "" },
+    airlineName: { type: String, trim: true, default: "" },
     airlineNumber: { type: String, required: true, trim: true },
-    fullAwbNumber: { type: String, required: true, unique: true, trim: true, index: true },
-    status: {
+    fullAwbNumber: {
       type: String,
-      enum: ['AVAILABLE', 'ALLOTTED', 'ISSUED', 'VOID'],
-      default: 'AVAILABLE',
+      required: true,
+      unique: true,
+      trim: true,
       index: true,
     },
-    allocatedTo: { type: String, default: '' },
+    status: {
+      type: String,
+      enum: ["AVAILABLE", "ALLOTTED", "ISSUED", "VOID"],
+      default: "AVAILABLE",
+      index: true,
+    },
+    allocatedTo: { type: String, default: "" },
     issuedAt: { type: String },
     voidReason: { type: String },
   },
@@ -39,8 +49,7 @@ const AwbStockSchema = new Schema<IAwbStock>(
         return ret;
       },
     },
-  }
+  },
 );
 
-export const AwbStock = mongoose.model<IAwbStock>('AwbStock', AwbStockSchema);
-
+export const AwbStock = mongoose.model<IAwbStock>("AwbStock", AwbStockSchema);

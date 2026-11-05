@@ -44,13 +44,11 @@ export interface IInvoice extends Document {
   date: string;
   dueDate?: string;
 
-  // ✅ Branding / bank / terms
   companyName?: string;
   companyLogoUrl?: string;
   companyBankDetails?: string;
   companyTerms?: string;
 
-  // ✅ E-invoice
   irn?: string;
   qrCodeUrl?: string;
   eInvoiceStatus?: "NOT_GENERATED" | "GENERATED" | "CANCELLED";
@@ -208,7 +206,18 @@ const InvoiceSchema = new Schema<IInvoice>(
       },
     ],
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+    // ✅ ADDED THIS TOJSON TRANSFORM
+    toJSON: {
+      transform(_doc, ret: Record<string, any>) {
+        ret.id = ret._id.toString();
+        delete ret._id;
+        delete ret.__v;
+        return ret;
+      },
+    },
+  },
 );
 
 export const Invoice =
