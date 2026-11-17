@@ -1,9 +1,19 @@
-import mongoose, { Schema, Document } from 'mongoose';
-import { DimensionEntry } from '../utils/volumetric.js';
+import mongoose, { Schema, Document } from "mongoose";
+import { DimensionEntry } from "../utils/volumetric.js";
 
-export type DocketServiceMode = 'EXPRESS_AIR' | 'STANDARD_AIR' | 'PRIORITY_AOG' | 'COLD_CHAIN';
-export type DocketPaymentMode = 'PREPAID' | 'TO_PAY' | 'ON_ACCOUNT';
-export type DocketStatus = 'BOOKED' | 'AWB_ASSIGNED' | 'MANIFESTED' | 'IN_TRANSIT' | 'DELIVERED' | 'CANCELLED';
+export type DocketServiceMode =
+  | "EXPRESS_AIR"
+  | "STANDARD_AIR"
+  | "PRIORITY_AOG"
+  | "COLD_CHAIN";
+export type DocketPaymentMode = "PREPAID" | "TO_PAY" | "ON_ACCOUNT";
+export type DocketStatus =
+  | "BOOKED"
+  | "AWB_ASSIGNED"
+  | "MANIFESTED"
+  | "IN_TRANSIT"
+  | "DELIVERED"
+  | "CANCELLED";
 
 export interface IDocket extends Document {
   docketNumber: string;
@@ -20,6 +30,13 @@ export interface IDocket extends Document {
   consigneeAddress: string;
   consigneePhone: string;
   consigneeGst: string;
+
+  // ✅ NEW: Customer (Billing Party)
+  customerName?: string;
+  customerAddress?: string;
+  customerPhone?: string;
+  customerGst?: string;
+
   pieces: number;
   packageType: string;
   actualWeightKg: number;
@@ -51,7 +68,7 @@ const DimensionSchema = new Schema<DimensionEntry>(
     heightCm: { type: Number, required: true },
     pieces: { type: Number, required: true, default: 1 },
   },
-  { _id: false }
+  { _id: false },
 );
 
 const DocketSchema = new Schema<IDocket>(
@@ -60,32 +77,39 @@ const DocketSchema = new Schema<IDocket>(
     bookingDate: { type: String, required: true },
     serviceMode: {
       type: String,
-      enum: ['EXPRESS_AIR', 'STANDARD_AIR', 'PRIORITY_AOG', 'COLD_CHAIN'],
-      default: 'STANDARD_AIR',
+      enum: ["EXPRESS_AIR", "STANDARD_AIR", "PRIORITY_AOG", "COLD_CHAIN"],
+      default: "STANDARD_AIR",
     },
     paymentMode: {
       type: String,
-      enum: ['PREPAID', 'TO_PAY', 'ON_ACCOUNT'],
-      default: 'PREPAID',
+      enum: ["PREPAID", "TO_PAY", "ON_ACCOUNT"],
+      default: "PREPAID",
     },
     origin: { type: String, required: true, uppercase: true },
     destination: { type: String, required: true, uppercase: true },
     consignorName: { type: String, required: true },
-    consignorAddress: { type: String, default: '' },
-    consignorPhone: { type: String, default: '' },
-    consignorGst: { type: String, default: '' },
+    consignorAddress: { type: String, default: "" },
+    consignorPhone: { type: String, default: "" },
+    consignorGst: { type: String, default: "" },
     consigneeName: { type: String, required: true },
-    consigneeAddress: { type: String, default: '' },
-    consigneePhone: { type: String, default: '' },
-    consigneeGst: { type: String, default: '' },
+    consigneeAddress: { type: String, default: "" },
+    consigneePhone: { type: String, default: "" },
+    consigneeGst: { type: String, default: "" },
+
+    // ✅ NEW: Customer (Billing Party)
+    customerName: { type: String, default: "" },
+    customerAddress: { type: String, default: "" },
+    customerPhone: { type: String, default: "" },
+    customerGst: { type: String, default: "" },
+
     pieces: { type: Number, required: true, default: 1 },
-    packageType: { type: String, default: 'Boxes' },
+    packageType: { type: String, default: "Boxes" },
     actualWeightKg: { type: Number, required: true, default: 0 },
     dimensions: [DimensionSchema],
     volumetricWeightKg: { type: Number, default: 0 },
     chargeableWeightKg: { type: Number, default: 0 },
-    natureOfGoods: { type: String, default: 'General Cargo' },
-    handlingCode: { type: String, default: 'GEN' },
+    natureOfGoods: { type: String, default: "General Cargo" },
+    handlingCode: { type: String, default: "GEN" },
     declaredValue: { type: Number, default: 0 },
     ewayBillNumber: { type: String },
     ratePerKg: { type: Number, default: 0 },
@@ -99,8 +123,15 @@ const DocketSchema = new Schema<IDocket>(
     assignedAwb: { type: String },
     status: {
       type: String,
-      enum: ['BOOKED', 'AWB_ASSIGNED', 'MANIFESTED', 'IN_TRANSIT', 'DELIVERED', 'CANCELLED'],
-      default: 'BOOKED',
+      enum: [
+        "BOOKED",
+        "AWB_ASSIGNED",
+        "MANIFESTED",
+        "IN_TRANSIT",
+        "DELIVERED",
+        "CANCELLED",
+      ],
+      default: "BOOKED",
       index: true,
     },
   },
@@ -114,8 +145,7 @@ const DocketSchema = new Schema<IDocket>(
         return ret;
       },
     },
-  }
+  },
 );
 
-export const Docket = mongoose.model<IDocket>('Docket', DocketSchema);
-
+export const Docket = mongoose.model<IDocket>("Docket", DocketSchema);

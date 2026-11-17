@@ -2,6 +2,8 @@
 import { FastifyInstance } from "fastify";
 import { Invoice, IPayment } from "../models/Invoice.js";
 import { InvoiceSequence } from "../models/InvoiceSequence.js";
+import { Docket } from "../models/Docket.js";
+import { Mawb } from "../models/Mawb.js";
 import { buildInvoicePdf } from "../lib/invoice-pdf.js";
 import { sendInvoiceEmail } from "../lib/email-sender.js";
 
@@ -14,6 +16,69 @@ export async function invoiceRoutes(fastify: FastifyInstance) {
     }
     return `${(year - 1).toString().slice(-2)}-${year.toString().slice(-2)}`;
   };
+
+  // 0. ✅ NEW — Lookup docket customer for a batch of MAWB/HAWB references
+  //    Frontend sends e.g. { mawbNumbers: ["176-12345678", ...] }
+  //    Returns a map keyed by mawbNumber → customer fields (from linked Docket)
+  fastify.post("/lookup-customer", async (request, reply) => {
+    try {
+      const { mawbNumbers } = request.body as { mawbNumbers?: string[] };
+      if (!Array.isArray(mawbNumbers) || mawbNumbers.length === 0) {
+        return { success: true, customers: {} as Record<string, any> };
+      }
+
+      // 1) Find MAWBs → their docketId
+      const mawbs = await Mawb.find({ mawbNumber: { $in: mawbNumbers } })
+        .select("mawbNumber docketId")
+        .lean();
+
+      const docketIdToMawb = new Map<string, string>();
+      const mawbToDocketId = new Map<string, string>();
+      for (const m of mawbs) {
+        if (m.docketId) {
+          mawbToDocketId.set(m.mawbNumber, m.docketId);
+          docketIdToMawb.set(m.docketId, m.mawbNumber);
+        }
+      }
+
+      const docketIds = Array.from(docketIdToMawb.keys());
+      const customers: Record<string, any> = {};
+
+      if (docketIds.length > 0) {
+        // 2) Load the dockets → customer fields
+        const dockets = await Docket.find({ _id: { $in: docketIds } })
+          .select(
+            "customerName customerAddress customerPhone customerGst consignorName consignorAddress consignorPhone consignorGst",
+          )
+          .lean();
+
+        for (const d of dockets) {
+          const mawbNumber = docketIdToMawb.get(String(d._id));
+          if (!mawbNumber) continue;
+
+          // Prefer the dedicated customer (billing party) if present,
+          // otherwise fall back to the consignor.
+          const hasCustomer = Boolean(
+            d.customerName && String(d.customerName).trim(),
+          );
+          customers[mawbNumber] = {
+            customerName: hasCustomer ? d.customerName : d.consignorName,
+            customerAddress: hasCustomer
+              ? d.customerAddress
+              : d.consignorAddress,
+            customerPhone: hasCustomer ? d.customerPhone : d.consignorPhone,
+            customerGstId: hasCustomer ? d.customerGst : d.consignorGst,
+            source: hasCustomer ? "CUSTOMER" : "CONSIGNOR",
+          };
+        }
+      }
+
+      return { success: true, customers };
+    } catch (error: any) {
+      reply.status(500);
+      return { success: false, message: error.message };
+    }
+  });
 
   // 1. GET ALL
   fastify.get("/", async (request, reply) => {
