@@ -14,6 +14,35 @@ import {
 const today = () => new Date().toISOString().split("T")[0];
 
 /**
+ * Generates a unique docket number: DKT-{ORIGIN}-{DEST}-{SEQ}
+ * Retries on collision to avoid duplicate-key errors under concurrency.
+ */
+async function generateDocketNumber(
+  origin: string,
+  destination: string,
+): Promise<string> {
+  const originCode = (origin || "DEL").toUpperCase().slice(0, 3);
+  const destCode = (destination || "LHR").toUpperCase().slice(0, 3);
+
+  // Start from current count + 101, then keep incrementing if a collision occurs
+  let seq = (await Docket.countDocuments()) + 101;
+
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const candidate = `DKT-${originCode}-${destCode}-${seq
+      .toString()
+      .padStart(4, "0")}`;
+
+    const exists = await Docket.exists({ docketNumber: candidate });
+    if (!exists) return candidate;
+
+    seq += 1;
+  }
+
+  // Fallback: timestamp-based, guaranteed unique enough
+  return `DKT-${originCode}-${destCode}-${Date.now().toString().slice(-6)}`;
+}
+
+/**
  * Issues the MAWB + CASS invoice for a docket using an AWB stock record that
  * has ALREADY been marked ISSUED, then marks the docket AWB_ASSIGNED.
  * Shared by "create docket" (when an AWB is chosen) and "assign-awb".
@@ -60,10 +89,18 @@ async function issueMawbForDocket(
     hawbs: [],
   });
 
+  // ✅ Prefer the Customer (billing party) name on the invoice,
+  //    fall back to the consignor name if not provided.
+  const invoiceCustomerName =
+    (docket.customerName && String(docket.customerName).trim()) ||
+    docket.consignorName;
+
   const invoice = await CassInvoice.create({
-    invoiceNumber: `INV-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`,
+    invoiceNumber: `INV-${new Date().getFullYear()}-${Math.floor(
+      1000 + Math.random() * 9000,
+    )}`,
     mawbNumber: mawb.mawbNumber,
-    customerName: docket.consignorName,
+    customerName: invoiceCustomerName,
     date: today(),
     freightCharges: docket.freightAmount,
     fuelSurcharge: docket.fuelSurcharge,
@@ -84,6 +121,7 @@ async function issueMawbForDocket(
     details: {
       docketNumber: docket.docketNumber,
       invoiceNumber: invoice.invoiceNumber,
+      customerName: invoiceCustomerName,
     },
   });
 
@@ -114,6 +152,7 @@ export default async function docketRoutes(fastify: FastifyInstance) {
           { docketNumber: { $regex: query.search, $options: "i" } },
           { consignorName: { $regex: query.search, $options: "i" } },
           { consigneeName: { $regex: query.search, $options: "i" } },
+          { customerName: { $regex: query.search, $options: "i" } }, // ✅ NEW
           { assignedAwb: { $regex: query.search, $options: "i" } },
         ];
       }
@@ -173,12 +212,11 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         handlingFee: body.docketFee || 250,
       });
 
-      // ✅ Auto-generate docket number based on DB count + Origin/Destination
-      const count = await Docket.countDocuments();
-      const sequenceNum = (count + 101).toString().padStart(4, "0");
-      const originCode = (body.origin || "DEL").toUpperCase().slice(0, 3);
-      const destCode = (body.destination || "LHR").toUpperCase().slice(0, 3);
-      const generatedDocketNumber = `DKT-${originCode}-${destCode}-${sequenceNum}`;
+      // ✅ Auto-generate docket number with collision-safe retry
+      const generatedDocketNumber = await generateDocketNumber(
+        body.origin,
+        body.destination,
+      );
 
       // If the form picked an AWB, claim it atomically BEFORE saving the docket
       let claimedStock: any = null;
@@ -201,6 +239,12 @@ export default async function docketRoutes(fastify: FastifyInstance) {
       try {
         docket = await Docket.create({
           ...body,
+          // ✅ Normalise customer fields so they always exist as strings
+          customerName: body.customerName || "",
+          customerAddress: body.customerAddress || "",
+          customerPhone: body.customerPhone || "",
+          customerGst: body.customerGst || "",
+
           assignedAwb: undefined, // set below once the MAWB is issued
           docketNumber: generatedDocketNumber, // Overrides any fake frontend number
           bookingDate: body.bookingDate || today(),
@@ -219,6 +263,7 @@ export default async function docketRoutes(fastify: FastifyInstance) {
           status: "BOOKED",
         });
       } catch (err) {
+        // Roll back the AWB claim if the docket save failed
         if (claimedStock) {
           await AwbStock.updateOne(
             { _id: claimedStock._id },
@@ -233,7 +278,11 @@ export default async function docketRoutes(fastify: FastifyInstance) {
         entityId: docket.docketNumber,
         action: "CREATE",
         performedBy,
-        details: { chargeableWeightKg, totalAmount: docket.totalAmount },
+        details: {
+          chargeableWeightKg,
+          totalAmount: docket.totalAmount,
+          customerName: docket.customerName,
+        },
       });
 
       let mawb: any = null;
